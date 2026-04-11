@@ -10,7 +10,7 @@ User: id, email, name, api_key.
 Prescription: id, user_id, title, start_date, end_date, medicines (list), history (dict).
 MedicineDetail: id, prescription_id, name, total_stock, morning_dose, midday_dose, evening_dose, morning_time, midday_time, evening_time.
 Endpoints Đơn Giản
-Authentication: Chỉ đăng ký và lấy API key.
+Authentication: Chỉ đăng ký và lấy API key
 Prescriptions: CRUD cơ bản.
 Medicines: CRUD trong prescription.
 History: Cập nhật đơn giản.

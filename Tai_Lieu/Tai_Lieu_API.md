@@ -358,4 +358,77 @@ MediRemind là ứng dụng Flutter giúp người dùng quản lý đơn thuố
 - Chuyển sang SQLite/PostgreSQL khi scale up
 - Thêm authentication và user isolation
 - Implement caching layer
+# chuyende2
+
+## Giới thiệu
+
+`chuyende2` là ứng dụng Flutter hỗ trợ quản lý đơn thuốc, nhắc giờ uống thuốc và theo dõi lịch sử tuân thủ.
+
+## Thiết kế cơ sở dữ liệu
+
+Ứng dụng sử dụng SQLite cục bộ (file `mediremind.db`) thông qua `sqflite` và `sqflite_common_ffi`.
+
+### 1) Mô hình dữ liệu tổng quan
+
+- Một `don_thuoc` có nhiều `chi_tiet_thuoc` (1-N).
+- Một `don_thuoc` có nhiều bản ghi `nhat_ky_uong` (1-N).
+- Xóa một `don_thuoc` sẽ tự động xóa toàn bộ dữ liệu con nhờ `ON DELETE CASCADE`.
+
+Quan hệ logic:
+
+```text
+don_thuoc (1) ---- (N) chi_tiet_thuoc
+    |
+    +---- (N) nhat_ky_uong
+```
+
+### 2) Chi tiết các bảng
+
+#### Bảng `don_thuoc`
+
+Lưu thông tin chung của một đơn thuốc.
+
+- `id` (TEXT, PK): mã định danh đơn thuốc.
+- `title` (TEXT): tên đơn thuốc.
+- `start_date` (TEXT): ngày bắt đầu (ISO-8601).
+- `end_date` (TEXT): ngày kết thúc (ISO-8601).
+
+#### Bảng `chi_tiet_thuoc`
+
+Lưu danh sách thuốc thuộc một đơn.
+
+- `id` (INTEGER, PK, AUTOINCREMENT): khóa chính.
+- `don_thuoc_id` (TEXT, FK): tham chiếu `don_thuoc.id`.
+- `name` (TEXT): tên thuốc.
+- `total_stock` (INTEGER): tổng số viên còn lại trong kho.
+- `morning_dose`, `midday_dose`, `evening_dose` (INTEGER): liều uống theo buổi.
+- `morning_time`, `midday_time`, `evening_time` (TEXT): giờ nhắc (định dạng `HH:mm`).
+
+#### Bảng `nhat_ky_uong`
+
+Lưu lịch sử đã uống theo ngày và ca uống.
+
+- `id` (INTEGER, PK, AUTOINCREMENT): khóa chính.
+- `don_thuoc_id` (TEXT, FK): tham chiếu `don_thuoc.id`.
+- `date` (TEXT): ngày ghi nhận (định dạng `yyyy-MM-dd`).
+- `history_key` (TEXT): khóa ca uống, ví dụ `Paracetamol_morning`.
+
+### 3) Quy tắc toàn vẹn dữ liệu
+
+- Bật ràng buộc khóa ngoại bằng `PRAGMA foreign_keys = ON`.
+- Dùng `ON DELETE CASCADE` để tránh bản ghi mồ côi khi xóa đơn thuốc.
+- Lưu/cập nhật đơn thuốc theo transaction để đảm bảo đồng bộ dữ liệu cha-con.
+
+### 4) Luồng ghi/đọc dữ liệu chính
+
+- **Lưu đơn thuốc**: ghi `don_thuoc` -> xóa dữ liệu cũ của đơn (chi tiết + lịch sử) -> chèn lại `chi_tiet_thuoc` và `nhat_ky_uong`.
+- **Đọc dữ liệu**: đọc tất cả `don_thuoc`, sau đó truy vấn dữ liệu con theo `don_thuoc_id` để dựng lại object `Prescription`.
+- **Xóa đơn thuốc**: xóa ở bảng `don_thuoc`, dữ liệu con tự xóa theo cascade.
+
+## Công nghệ sử dụng
+
+- Flutter
+- SQLite (`sqflite`, `sqflite_common_ffi`)
+- `local_notifier` cho nhắc giờ uống thuốc
+- `google_mlkit_text_recognition` và `image_picker` cho quét đơn từ ảnh
 

@@ -358,8 +358,8 @@ MediRemind là ứng dụng Flutter giúp người dùng quản lý đơn thuố
 - Chuyển sang SQLite/PostgreSQL khi scale up
 - Thêm authentication và user isolation
 - Implement caching layer
-# chuyende2
 
+# Mô tả thiết kế DB
 ## Giới thiệu
 
 `chuyende2` là ứng dụng Flutter hỗ trợ quản lý đơn thuốc, nhắc giờ uống thuốc và theo dõi lịch sử tuân thủ.

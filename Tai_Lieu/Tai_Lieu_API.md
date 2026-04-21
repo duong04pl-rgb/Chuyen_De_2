@@ -359,14 +359,24 @@ MediRemind là ứng dụng Flutter giúp người dùng quản lý đơn thuố
 - Thêm authentication và user isolation
 - Implement caching layer
 
+
+
 # Mô tả thiết kế DB
+
 ## Giới thiệu
 
 `chuyende2` là ứng dụng Flutter hỗ trợ quản lý đơn thuốc, nhắc giờ uống thuốc và theo dõi lịch sử tuân thủ.
 
 ## Thiết kế cơ sở dữ liệu
 
-Ứng dụng sử dụng SQLite cục bộ (file `mediremind.db`) thông qua `sqflite` và `sqflite_common_ffi`.
+Toàn bộ khởi tạo file SQLite, tạo bảng và thao tác CRUD được định nghĩa trong `lib/database_helper.dart` (lớp `DatabaseHelper`). Trên Windows/Linux, `main.dart` gán `databaseFactory` cho `sqflite_common_ffi` để `sqflite` hoạt động; bản thân helper chỉ import `package:sqflite/sqflite.dart`.
+
+### 0) Khởi tạo kết nối (theo `DatabaseHelper`)
+
+- **Singleton**: `DatabaseHelper.instance` giữ một `Database?` tĩnh, tránh mở nhiều kết nối song song.
+- **Tên file**: `mediremind.db`, đường dẫn đầy đủ = `join(getDatabasesPath(), 'mediremind.db')`.
+- **`openDatabase`**: `version: 1`, callback `onCreate: _createDB` tạo schema lần đầu.
+- **`onConfigure`**: thực thi `PRAGMA foreign_keys = ON` trước khi dùng DB để SQLite áp dụng khóa ngoại và `ON DELETE CASCADE`.
 
 ### 1) Mô hình dữ liệu tổng quan
 
@@ -382,7 +392,42 @@ don_thuoc (1) ---- (N) chi_tiet_thuoc
     +---- (N) nhat_ky_uong
 ```
 
-### 2) Chi tiết các bảng
+### 2) DDL (đúng theo `_createDB`)
+
+Các câu lệnh dưới đây tương ứng với chuỗi SQL trong `database_helper.dart` (hàm `_createDB`).
+
+```sql
+CREATE TABLE don_thuoc (
+  id TEXT PRIMARY KEY,
+  title TEXT,
+  start_date TEXT,
+  end_date TEXT
+);
+
+CREATE TABLE chi_tiet_thuoc (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  don_thuoc_id TEXT,
+  name TEXT,
+  total_stock INTEGER,
+  morning_dose INTEGER,
+  midday_dose INTEGER,
+  evening_dose INTEGER,
+  morning_time TEXT,
+  midday_time TEXT,
+  evening_time TEXT,
+  FOREIGN KEY (don_thuoc_id) REFERENCES don_thuoc (id) ON DELETE CASCADE
+);
+
+CREATE TABLE nhat_ky_uong (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  don_thuoc_id TEXT,
+  date TEXT,
+  history_key TEXT,
+  FOREIGN KEY (don_thuoc_id) REFERENCES don_thuoc (id) ON DELETE CASCADE
+);
+```
+
+### 3) Chi tiết các bảng
 
 #### Bảng `don_thuoc`
 
@@ -413,17 +458,30 @@ Lưu lịch sử đã uống theo ngày và ca uống.
 - `date` (TEXT): ngày ghi nhận (định dạng `yyyy-MM-dd`).
 - `history_key` (TEXT): khóa ca uống, ví dụ `Paracetamol_morning`.
 
-### 3) Quy tắc toàn vẹn dữ liệu
+### 4) Ánh xạ cột ↔ model `Prescription` / `MedicineDetail`
+
+Helper đọc/ghi qua các model khai báo trong `lib/main.dart` (import chéo từ `database_helper.dart`).
+
+| Bảng / cột DB | Nguồn khi ghi (`savePrescription`) | Ghi chú |
+|---------------|-----------------------------------|----------|
+| `don_thuoc.id`, `title` | `p.id`, `p.title` | `insert` với `ConflictAlgorithm.replace` → cùng `id` thì ghi đè (upsert đơn). |
+| `start_date`, `end_date` | `p.startDate`, `p.endDate` | `toIso8601String()`. |
+| `chi_tiet_thuoc.*` | `MedicineDetail.toMap()` → `mDose`/`midDose`/`eDose`, `mTime`/`midTime`/`eTime` | Map sang `morning_dose`, …, `evening_time`. |
+| `nhat_ky_uong.date`, `history_key` | `p.history` | Mỗi phần tử trong `List<String>` của một ngày là một dòng `nhat_ky_uong`. |
+
+Khi đọc (`getAllPrescriptions`), dữ liệu từ `chi_tiet_thuoc` được gom lại thành `MedicineDetail.fromMap({...})` với key `mDose`, `midDose`, … đúng với `fromMap` trong `main.dart`.
+
+### 5) Quy tắc toàn vẹn dữ liệu
 
 - Bật ràng buộc khóa ngoại bằng `PRAGMA foreign_keys = ON`.
 - Dùng `ON DELETE CASCADE` để tránh bản ghi mồ côi khi xóa đơn thuốc.
 - Lưu/cập nhật đơn thuốc theo transaction để đảm bảo đồng bộ dữ liệu cha-con.
 
-### 4) Luồng ghi/đọc dữ liệu chính
+### 6) Luồng ghi/đọc/xóa (theo các hàm public trong helper)
 
-- **Lưu đơn thuốc**: ghi `don_thuoc` -> xóa dữ liệu cũ của đơn (chi tiết + lịch sử) -> chèn lại `chi_tiet_thuoc` và `nhat_ky_uong`.
-- **Đọc dữ liệu**: đọc tất cả `don_thuoc`, sau đó truy vấn dữ liệu con theo `don_thuoc_id` để dựng lại object `Prescription`.
-- **Xóa đơn thuốc**: xóa ở bảng `don_thuoc`, dữ liệu con tự xóa theo cascade.
+- **`savePrescription(Prescription p)`**: mở một `db.transaction`: (1) `insert` vào `don_thuoc` với replace theo `id`; (2) `delete` mọi dòng `chi_tiet_thuoc` và `nhat_ky_uong` có `don_thuoc_id = p.id`; (3) lặp `insert` từng thuốc và từng cặp `(date, history_key)` trong `p.history`. Chiến lược này đảm bảo khi sửa đơn, danh sách thuốc và lịch sử trên DB trùng với object trong bộ nhớ.
+- **`getAllPrescriptions()`**: `query('don_thuoc')`, với mỗi `id` thực hiện hai `query` lọc theo `don_thuoc_id`, ghép thành `List<Prescription>`.
+- **`deletePrescription(String id)`**: `delete` một dòng trong `don_thuoc`; nhờ FK + cascade, các bản ghi con tương ứng cũng bị xóa.
 
 ## Công nghệ sử dụng
 
